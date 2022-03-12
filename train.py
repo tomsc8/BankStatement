@@ -1,9 +1,8 @@
 import csv
 import os
-import texthero as hero
 import fasttext
 import pandas as pd
-from texthero import preprocessing, stopwords
+from sharedfunctions import prep_fasttext
 
 reldir = "model"
 absdir = os.path.join(os.path.dirname(__file__), reldir)
@@ -13,31 +12,6 @@ absdir = os.path.join(os.path.dirname(__file__), reldir)
 history_filename = "historical_transactions_c copy.xlsx"
 with open(history_filename) as hist_file:
     hist_df = pd.read_excel(history_filename, sheet_name="Sheet1")
-
-
-def prep_fasttext(dfp):
-    # custom stopwords
-    default_stopwords = stopwords.DEFAULT
-    custom_stopwords = default_stopwords.union({"k1", "e-comm", "paypal", "nan", "k2", "karte2", "um"})
-    # pre-processing
-    custom_pipeline = [preprocessing.fillna,
-                       preprocessing.lowercase,
-                       preprocessing.remove_digits,
-                       preprocessing.remove_whitespace,
-                       preprocessing.remove_diacritics,
-                       # preprocessing.remove_brackets
-                       ]
-
-    # dfp['clean_text'] = dfp.astype('str')
-    dfp['fasttext'] = hero.clean(dfp["partnerName"].astype('str') + " " + dfp["reference"].astype('str'), custom_pipeline)
-    dfp['fasttext'] = hero.remove_stopwords(dfp['fasttext'], custom_stopwords)
-    dfp['fasttext'] = hero.remove_punctuation(dfp['fasttext'])
-    # TODO
-    #  if label then with __label__ if no label then empty filter out all rows that don't have a category assigned.
-    #  atm is only checked for full column availability but it should be on cell level.
-    if 'category' in dfp.columns:
-        dfp['fasttext'] = "__label__" + dfp['category'] + " " + dfp['fasttext']
-    return dfp
 
 
 prep_df = hist_df[hist_df.category.notnull()]

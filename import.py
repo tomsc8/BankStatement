@@ -1,14 +1,18 @@
 import json
 import os
+import re
+
+import fasttext
+import numpy as np
 import pandas as pd
+from sharedfunctions import prep_fasttext
 
 # specify filename which holds complete history of transaction data
-from train import prep_fasttext
-
 history_filename = "historical_json.xlsx"
 
-reldir = "input"
-absdir = os.path.join(os.path.dirname(__file__), reldir)
+inputdir = "input"
+modeldir = "model"
+absdir = os.path.join(os.path.dirname(__file__), inputdir)
 inputfiles = []
 
 # scan through folder /reldir and create a list of all identified .json files
@@ -40,11 +44,25 @@ input_df["amount.value"] = input_df["amount.value"].div(100).round(2)
 input_df = input_df[FIELDS]
 # print(input_df)
 input_df = prep_fasttext(input_df)
-print(input_df["fasttext"])
+# print(input_df["fasttext"])
+
+# load model
+model = fasttext.load_model(os.path.join(os.path.dirname(__file__), modeldir, "bs.model"))
+# classify transactions
+predictions = []
+for line in input_df["fasttext"]:
+    pred_label = model.predict(line, k=-1, threshold=0.5)
+    predictions.append(pred_label)
+
+input_df[["category", "probability"]] = predictions
+input_df["category"] = input_df["category"].astype(str).str.replace("label", '').str.replace("[^a-zA-Z]", '',
+                                                                                             regex=True)
+
+print(input_df["category"])
+input_df.to_excel("2022.xlsx", sheet_name="Sheet1", index=False)
 
 # TODO
-# load model
-# classify transactions
+# refactor filenames into MODELPATH constants
 # delete fasttext column again
 # write to excel or to historical exel
 
