@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 from sharedfunctions import prep_fasttext
 
+# TODO import .csv from cardcomplete, DKB, DKB creditcard and name account as additional column
+
 # specify filename which holds complete history of transaction data
 history_filename = "historical_json.xlsx"
 
@@ -18,33 +20,56 @@ inputfiles = []
 # scan through folder /reldir and create a list of all identified .json files
 for filename in os.listdir(absdir):
     f = os.path.join(absdir, filename)
-    if os.path.isfile(f) and f.endswith('.json'):
+    if os.path.isfile(f) and f.endswith('.csv'):
         inputfiles.append(f)
 
 # define with columns to use after import
-FIELDS = ["booking", "partnerName", "partnerAccount.iban", "partnerAccount.bic", "partnerAccount.number",
-          "partnerAccount.bankCode", "amount.value", "amount.currency", "reference"]
+FIELDS = ["booking", "partnerName", "amount.value", "amount.currency", "reference"]
+# "partnerAccount.iban", "partnerAccount.bic", "partnerAccount.number", "partnerAccount.bankCode",
+
 # define unique key to identify duplicates
 KEY = ["booking", "amount.value", "reference"]
 
 for filename in inputfiles:
     # open file and close afterwards
-    with open(filename) as trx_file:
-        serialdata = json.load(trx_file)
+    with open(filename, encoding='latin_1') as trx_file:
+        if filename.endswith('.json'):
+            # TODO json to dataframe function
+            file_df = pd.json_normalize(json.load(trx_file))
+            file_df["amount.value"] = file_df["amount.value"].div(100).round(2)
+        if filename.endswith('.csv') and '10527' in filename:
+            file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
+                                  parse_dates=["Buchungstag"])
+            file_df.rename(
+                columns={'Auftraggeber / Begünstigter': "partnerName", 'Betrag (EUR)': 'amount.value', "Buchungstag": "booking",
+                         "Verwendungszweck": "reference"}, inplace=True)
+            file_df.insert(4, "amount.currency", "EUR")
 
-    # flatten .json structure
-    file_df = pd.json_normalize(serialdata)
+        if filename.endswith('.csv') and '4748' in filename:
+            # DKB Kreditkarte Importer
+            file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
+                                  parse_dates=["Belegdatum"])
+            file_df.rename(columns={'Betrag (EUR)': 'amount.value', "Belegdatum": "booking",
+                                    "Beschreibung": "reference"}, inplace=True)
+            file_df.insert(4, "amount.currency", "EUR")
+            file_df.insert(5, "partnerName", "")
+
+        if filename.endswith('.csv') and 'transactions' in filename:
+            # card complete importer
+            file_df = pd.read_csv(trx_file, skiprows=1, decimal=',', thousands='.', parse_dates=["DATUM-DATE"])
+            file_df.rename(columns={"HAENLDERNAME-MERCHANT_NAME": "partnerName", 'BETRAG-AMOUNT': 'amount.value',
+                                    "WAEHRUNG-CURRENCY": "amount.currency", "DATUM-DATE": "booking",
+                                    "BRANCHE-CATEGORY": "reference"}, inplace=True)
+
+    file_df = file_df[FIELDS]
+
     try:
         input_df = pd.concat([input_df, file_df]).drop_duplicates(subset=KEY)
     except:
         input_df = file_df
 
-input_df["amount.value"] = input_df["amount.value"].div(100).round(2)
-# only keep the columns defined in FIELDS
-input_df = input_df[FIELDS]
-# print(input_df)
 input_df = prep_fasttext(input_df)
-# print(input_df["fasttext"])
+print(input_df["fasttext"])
 
 # load model
 model = fasttext.load_model(os.path.join(os.path.dirname(__file__), modeldir, "bs.model"))
@@ -59,7 +84,7 @@ input_df["category"] = input_df["category"].astype(str).str.replace("label", '')
                                                                                              regex=True)
 
 print(input_df["category"])
-input_df.to_excel("2022.xlsx", sheet_name="Sheet1", index=False)
+input_df.to_excel("2022_test.xlsx", sheet_name="Sheet1", index=False)
 
 # TODO
 # refactor filenames into MODELPATH constants

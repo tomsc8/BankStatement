@@ -9,7 +9,8 @@ absdir = os.path.join(os.path.dirname(__file__), reldir)
 
 # TODO get training file from argument instead
 
-history_filename = "historical_transactions_c copy.xlsx"
+# history_filename = "historical_transactions_c copy.xlsx"
+history_filename = "2022_labelled.xlsx"
 with open(history_filename) as hist_file:
     hist_df = pd.read_excel(history_filename, sheet_name="Sheet1")
 
