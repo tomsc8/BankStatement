@@ -102,10 +102,10 @@ input_df["category"] = input_df["category"].astype(str).str.replace("label", '')
 print(input_df["category"])
 input_df.to_excel("2022_test.xlsx", sheet_name="Sheet1", index=False)
 
-# TODO
-# refactor filenames into MODELPATH constants
-# delete fasttext column again
-# write to excel or to historical exel
+# TODO test ob sheet2 nicht geändert wird
+# TODO warnings bereinigen
+# TODO test ob für andere Files unnötig durchlaufen und ob Duplikate kommen
+# TODO refactor filenames into MODELPATH constants
 
 # TODO add new transactions to existing historical DB
 # with open(history_filename) as hist_file:
