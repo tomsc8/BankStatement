@@ -1,15 +1,9 @@
 import json
 import os
-import re
-
 import fasttext
-import numpy as np
 import pandas as pd
-import pytz
-
+from datetime import datetime
 from sharedfunctions import prep_fasttext
-
-# TODO import .csv from cardcomplete, DKB, DKB creditcard and name account as additional column
 
 # specify filename which holds complete history of transaction data
 history_filename = "historical_json.xlsx"
@@ -31,6 +25,7 @@ FIELDS = ["booking", "partnerName", "partnerAccount.iban", "amount.value", "amou
 
 # define unique key to identify duplicates
 KEY = ["booking", "amount.value", "reference"]
+german_date = lambda x: datetime.strptime(x, '%d.%m.%Y')
 
 for filename in inputfiles:
     # open file and close afterwards
@@ -40,25 +35,31 @@ for filename in inputfiles:
             file_df = pd.json_normalize(json.load(trx_file))
             file_df["amount.value"] = file_df["amount.value"].div(100).round(2)
             file_df.insert(1, "account", "Sparkasse")
-            file_df["booking"] = file_df["booking"].str.split('T').str[0]
+            # file_df["booking"] = file_df["booking"].str.split('T').str[0]
+            file_df["booking"] = pd.to_datetime(file_df["booking"].str.split('T').str[0], format="%Y-%m-%d")
 
         if filename.endswith('.csv') and '10527' in filename:
             # DKB Debitkonto Importer
+
             file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
-                                  parse_dates=["Buchungstag"], infer_datetime_format=True)
+                                  parse_dates=["Buchungstag"], date_parser=german_date)
             file_df.rename(
                 columns={'Auftraggeber / Begünstigter': "partnerName", 'Betrag (EUR)': 'amount.value',
                          "Buchungstag": "booking",
                          "Verwendungszweck": "reference", "Kontonummer": "partnerAccount.iban"}, inplace=True)
+
+            # file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
+            # file_df["amount.value"] = file_df["amount.value"].str.replace(",", ".").astype(float)
             file_df.insert(4, "amount.currency", "EUR")
             file_df.insert(1, "account", "DKB Konto")
 
         if filename.endswith('.csv') and '4748' in filename:
             # DKB Kreditkarte Importer
             file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
-                                  parse_dates=["Belegdatum"], infer_datetime_format=True)
+                                  parse_dates=["Belegdatum"], date_parser=german_date)
             file_df.rename(columns={'Betrag (EUR)': 'amount.value', "Belegdatum": "booking",
                                     "Beschreibung": "reference"}, inplace=True)
+            file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
             file_df.insert(4, "amount.currency", "EUR")
             file_df.insert(5, "partnerName", "")
             file_df.insert(1, "account", "DKB Kreditkarte Thomas")
@@ -66,24 +67,25 @@ for filename in inputfiles:
 
         if filename.endswith('.csv') and 'transactions' in filename:
             # card complete importer
-            file_df = pd.read_csv(trx_file, skiprows=1, decimal=',', thousands='.', parse_dates=["DATUM-DATE"])
+            file_df = pd.read_csv(trx_file, skiprows=1, decimal=',', thousands='.',
+                                  parse_dates=["DATUM-DATE"], date_parser=german_date)
             file_df.rename(columns={"HAENLDERNAME-MERCHANT_NAME": "partnerName", 'BETRAG-AMOUNT': 'amount.value',
                                     "WAEHRUNG-CURRENCY": "amount.currency", "DATUM-DATE": "booking",
                                     "KARTENNUMMER-CARD_NUMBER": "account"}, inplace=True)
+            file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
             file_df.insert(5, "reference", "")
             file_df.insert(6, "partnerAccount.iban", "")
 
     file_df = file_df[FIELDS]
     # harmonize different datetime formats to they are comparable as string
-    file_df["booking"] = pd.to_datetime(file_df["booking"]).astype('str')
+    file_df["booking"] = file_df["booking"].astype('str')
 
     try:
         input_df = pd.concat([input_df, file_df]).drop_duplicates(subset=KEY)
     except:
         input_df = file_df
 
-# TODO fix sorting
-input_df.sort_values(by="booking")
+input_df.sort_values(["booking"], inplace=True)
 input_df = prep_fasttext(input_df)
 print(input_df["fasttext"])
 
