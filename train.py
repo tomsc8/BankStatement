@@ -10,7 +10,7 @@ absdir = os.path.join(os.path.dirname(__file__), reldir)
 # TODO get training file from argument instead
 
 # history_filename = "historical_transactions_c copy.xlsx"
-history_filename = "2022_labelled.xlsx"
+history_filename = "all_statements.xlsx"
 with open(history_filename) as hist_file:
     hist_df = pd.read_excel(history_filename, sheet_name="Sheet1")
 
@@ -23,7 +23,7 @@ prep_df = prep_fasttext(prep_df)
 
 # print(prep_df["fasttext"])
 cutoff = int(round((prep_df.shape[0]) * 0.8))
-prep_df.sample(frac=1)
+prep_df = prep_df.sample(frac=1)
 
 train_df = prep_df.iloc[:cutoff, :]
 train_df['fasttext'].to_csv('train.txt', index=False, header=None, quoting=csv.QUOTE_NONE)

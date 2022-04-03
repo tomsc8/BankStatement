@@ -6,7 +6,7 @@ from datetime import datetime
 from sharedfunctions import prep_fasttext
 
 # specify filename which holds complete history of transaction data
-history_filename = "historical_json.xlsx"
+history_filename = "all_statements.xlsx"
 
 inputdir = "input"
 modeldir = "model"
@@ -16,7 +16,7 @@ inputfiles = []
 # scan through folder /reldir and create a list of all identified .json files
 for filename in os.listdir(absdir):
     f = os.path.join(absdir, filename)
-    if os.path.isfile(f):  # and f.endswith('.csv'):
+    if os.path.isfile(f): #and f.endswith('.csv'):
         inputfiles.append(f)
 
 # define with columns to use after import
@@ -35,7 +35,6 @@ for filename in inputfiles:
             file_df = pd.json_normalize(json.load(trx_file))
             file_df["amount.value"] = file_df["amount.value"].div(100).round(2)
             file_df.insert(1, "account", "Sparkasse")
-            # file_df["booking"] = file_df["booking"].str.split('T').str[0]
             file_df["booking"] = pd.to_datetime(file_df["booking"].str.split('T').str[0], format="%Y-%m-%d")
 
         if filename.endswith('.csv') and '10527' in filename:
@@ -59,7 +58,7 @@ for filename in inputfiles:
                                   parse_dates=["Belegdatum"], date_parser=german_date)
             file_df.rename(columns={'Betrag (EUR)': 'amount.value', "Belegdatum": "booking",
                                     "Beschreibung": "reference"}, inplace=True)
-            file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
+            # file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
             file_df.insert(4, "amount.currency", "EUR")
             file_df.insert(5, "partnerName", "")
             file_df.insert(1, "account", "DKB Kreditkarte Thomas")
@@ -76,12 +75,19 @@ for filename in inputfiles:
             file_df.insert(5, "reference", "")
             file_df.insert(6, "partnerAccount.iban", "")
 
+        if filename.endswith('.xlsx'):
+            # historical file re-importer
+            file_df = pd.read_excel(filename, sheet_name="Sheet1")
+            bool_series = pd.isnull(file_df["category"])
+            file_df = file_df[bool_series]
+
+
     file_df = file_df[FIELDS]
-    # harmonize different datetime formats to they are comparable as string
+    # convert datetime to str for writing to csv and to identify duplicates later on
     file_df["booking"] = file_df["booking"].astype('str')
 
     try:
-        input_df = pd.concat([input_df, file_df]).drop_duplicates(subset=KEY)
+        input_df = pd.concat([input_df, file_df]).drop_duplicates(subset=KEY, keep='first')
     except:
         input_df = file_df
 
@@ -102,30 +108,21 @@ input_df["category"] = input_df["category"].astype(str).str.replace("label", '')
                                                                                              regex=True)
 
 print(input_df["category"])
-input_df.to_excel("2022_test.xlsx", sheet_name="Sheet1", index=False)
+input_df.to_excel("new_import.xlsx", sheet_name="Sheet1", index=False)
 
-# TODO test ob sheet2 nicht geändert wird
+# TODO schauen ob andere sheets existieren und diese auch speichern und schreiben.
 # TODO warnings bereinigen
 # TODO test ob für andere Files unnötig durchlaufen und ob Duplikate kommen
 # TODO refactor filenames into MODELPATH constants
 
-# TODO add new transactions to existing historical DB
-# with open(history_filename) as hist_file:
-#     hist_df = pd.read_excel(history_filename, sheet_name="Sheet1")
-# df = pd.concat([hist_df, input_df]).drop_duplicates(subset=KEY)
-# df.to_excel(history_filename, sheet_name="Sheet1", index=False)
-
+# add new transactions to existing historical DB
+with open(history_filename) as hist_file:
+    hist_df = pd.read_excel(history_filename, sheet_name="Sheet1")
+df = pd.concat([hist_df, input_df]).drop_duplicates(subset=KEY)
+df.sort_values(["booking", "account", "amount.value", "reference"], inplace=True)
+df.to_excel(history_filename, sheet_name="Sheet1", index=False)
 
 # bugs
 # empty column reference does not work as proper unique key -> line gets duplicated. Maybe typecast problem?
 # 2022-01-10T00:00:00.000+0100	Johanna Fersterer	AT902022700401024773			20227	-15	EUR
 # 2022-01-10T00:00:00.000+0100	Johanna Fersterer	AT902022700401024773			20227	-15	EUR
-
-# next steps
-# cleaning function universal for all DFs historical + new
-# don't write cleaning function to file
-# train model
-
-#
-#    timezone = pytz.timezone("Europe/Vienna")
-#   file_df["booking"] = timezone.localize(file_df["booking"]).isoformat()
