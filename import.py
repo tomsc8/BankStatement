@@ -41,7 +41,8 @@ for filename in inputfiles:
             # DKB Debitkonto Importer
 
             file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
-                                  parse_dates=["Buchungstag"], date_parser=german_date)
+                                      parse_dates=["Buchungstag"], date_parser=german_date)
+            # TODO dynamic header 4 or 6 depending which search & export mask was used. better to write function to independently find header position
             file_df.rename(
                 columns={'Auftraggeber / Begünstigter': "partnerName", 'Betrag (EUR)': 'amount.value',
                          "Buchungstag": "booking",
@@ -88,10 +89,15 @@ for filename in inputfiles:
 
     try:
         input_df = pd.concat([input_df, file_df]).drop_duplicates(subset=KEY, keep='first')
+        # TODO: if one element of KEY is empty it leaves a duplicate transaction
     except:
         input_df = file_df
 
-input_df.sort_values(["booking"], inplace=True)
+try:
+    input_df.sort_values(["booking"], inplace=True)
+except NameError:
+    print("no suitable files in /input")
+
 input_df = prep_fasttext(input_df)
 print(input_df["fasttext"])
 
