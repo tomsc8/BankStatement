@@ -2,6 +2,7 @@ import json
 import os
 import fasttext
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from sharedfunctions import prep_fasttext
 
@@ -25,7 +26,7 @@ FIELDS = ["booking", "partnerName", "partnerAccount.iban", "amount.value", "amou
 
 # define unique key to identify duplicates
 KEY = ["booking", "amount.value", "reference"]
-german_date = lambda x: datetime.strptime(x, '%d.%m.%Y')
+german_date = lambda x: datetime.strptime(x, '%d.%m.%y')
 
 for filename in inputfiles:
     # open file and close afterwards
@@ -41,12 +42,12 @@ for filename in inputfiles:
             # DKB Debitkonto Importer
 
             file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
-                                      parse_dates=["Buchungstag"], date_parser=german_date)
+                                      parse_dates=["Buchungsdatum"], date_parser=german_date)
             # TODO dynamic header 4 or 6 depending which search & export mask was used. better to write function to independently find header position
             file_df.rename(
-                columns={'Auftraggeber / Begünstigter': "partnerName", 'Betrag (EUR)': 'amount.value',
-                         "Buchungstag": "booking",
-                         "Verwendungszweck": "reference", "Kontonummer": "partnerAccount.iban"}, inplace=True)
+                columns={"ZahlungsempfÃ¤nger*in": "partnerName", "Betrag": 'amount.value',
+                         "Buchungsdatum": "booking",
+                         "Verwendungszweck": "reference", "GlÃ¤ubiger-ID": "partnerAccount.iban"}, inplace=True)
 
             # file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
             # file_df["amount.value"] = file_df["amount.value"].str.replace(",", ".").astype(float)
@@ -110,6 +111,7 @@ for line in input_df["fasttext"]:
     predictions.append(pred_label)
 
 input_df[["category", "probability"]] = predictions
+
 input_df["category"] = input_df["category"].astype(str).str.replace("label", '').str.replace("[^a-zA-Z]", '',
                                                                                              regex=True)
 
