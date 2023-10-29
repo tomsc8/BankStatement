@@ -1,0 +1,9 @@
+__label__Strom steckdose gmbh teilbetragsrechnung strom
+__label__Lebensmittel backhaus krapfn visa debit
+__label__Vermoegensanlage thomas scheider gesendet mit m14
+__label__Pensionsversicherung blablub versicherung  polizze fonds folgepramie meine blablub 
+__label__Essen wrap n roll  wrap n roll
+__label__Oeffis bahnfahrt    1bahnfahrt
+__label__Einkommen arbeitgeber  bezug
+__label__Essen billa  billa
+__label__Schwimmen plantsch plantsch plantsch plantsch 
