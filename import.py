@@ -50,7 +50,7 @@ for filename in inputfiles:
                          "Verwendungszweck": "reference", "GlÃ¤ubiger-ID": "partnerAccount.iban"}, inplace=True)
 
             # file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
-            # file_df["amount.value"] = file_df["amount.value"].str.replace(",", ".").astype(float)
+            file_df["amount.value"] = file_df["amount.value"].str.replace("Â â¬", "").str.replace(".", "").str.replace(",", ".").astype(float)
             file_df.insert(4, "amount.currency", "EUR")
             file_df.insert(1, "account", "DKB Konto")
 
@@ -105,12 +105,11 @@ print(input_df["fasttext"])
 # load model
 model = fasttext.load_model(os.path.join(os.path.dirname(__file__), modeldir, "bs.model"))
 # classify transactions
-predictions = []
-for line in input_df["fasttext"]:
-    pred_label = model.predict(line, k=-1, threshold=0.5)
-    predictions.append(pred_label)
 
-input_df[["category", "probability"]] = predictions
+def predict(row):
+    return model.predict(row["fasttext"], k=-1, threshold=0.5)[0]
+
+input_df["category"] = input_df.apply(predict, axis=1)
 
 input_df["category"] = input_df["category"].astype(str).str.replace("label", '').str.replace("[^a-zA-Z]", '',
                                                                                              regex=True)
