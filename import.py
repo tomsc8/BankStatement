@@ -45,12 +45,13 @@ for filename in inputfiles:
                                       parse_dates=["Buchungsdatum"], date_parser=german_date)
             # TODO dynamic header 4 or 6 depending which search & export mask was used. better to write function to independently find header position
             file_df.rename(
-                columns={"ZahlungsempfÃ¤nger*in": "partnerName", "Betrag": 'amount.value',
+                columns={"ZahlungsempfÃ¤nger*in": "partnerName", "Betrag (â¬)": 'amount.value',
                          "Buchungsdatum": "booking",
                          "Verwendungszweck": "reference", "GlÃ¤ubiger-ID": "partnerAccount.iban"}, inplace=True)
 
             # file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
-            file_df["amount.value"] = file_df["amount.value"].str.replace("Â â¬", "").str.replace(".", "").str.replace(",", ".").astype(float)
+            # file_df["amount.value"] = file_df["amount.value"].str.replace("Â â¬", "").str.replace(".", "").str.replace(",", ".").astype(float)
+            file_df["amount.value"] = file_df["amount.value"].astype(float)
             file_df.insert(4, "amount.currency", "EUR")
             file_df.insert(1, "account", "DKB Konto")
 
