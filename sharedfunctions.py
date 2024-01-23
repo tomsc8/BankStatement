@@ -4,7 +4,9 @@ from texthero import preprocessing, stopwords
 def prep_fasttext(dfp):
     # custom stopwords
     default_stopwords = stopwords.DEFAULT
-    custom_stopwords = default_stopwords.union({"k1", "e", "comm", "paypal", "nan", "k2", "karte2", "um", "none", "eu", "wien", "baden", "at", "ag", "de", "pos"})
+    custom_stopwords = default_stopwords.union({"k1", "e", "comm", "paypal", "nan", "k2", "karte2", "um", "none", "eu", "wien", "baden", "at", "ag", "de", "pos", "debit", "visa", "debitk",
+                                                "awv", "meldepflicht", "beachten", "hotline", "bundesbank","datum", "uhr", "girozentrale", "tan", "uhr1",
+                                                 "versicherungs", "aktiengesellschaft", "folgepraemie", "gmbh", "stripe", "via ppro"})
     # pre-processing
     custom_pipeline = [preprocessing.fillna,
                        preprocessing.lowercase,

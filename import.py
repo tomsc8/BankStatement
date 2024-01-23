@@ -40,21 +40,46 @@ for filename in inputfiles:
 
         if filename.endswith('.csv') and '10527' in filename:
             # DKB Debitkonto Importer
-
-            file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
-                                      parse_dates=["Buchungsdatum"], date_parser=german_date)
-            # TODO dynamic header 4 or 6 depending which search & export mask was used. better to write function to independently find header position
+            try:
+                file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
+                                        dayfirst=True, 
+                                        parse_dates=["Buchungstag"], 
+                                        # date_format="%d.%m.%Y", 
+                                        skip_blank_lines=True)
+                print("header=4 worked")
+            except:
+                print(" does not use header=4")
+           
+            try: 
+                file_df = pd.read_csv(trx_file, delimiter=';', header=6, quoting=1, decimal=',', thousands='.',
+                                        dayfirst=True, 
+                                        parse_dates=["Buchungstag"], 
+                                        # date_format="%d.%m.%Y",
+                                        skip_blank_lines=True)
+                print("header=6 worked")
+            except:
+                print(" does not use header=6")
             file_df.rename(
-                columns={"ZahlungsempfÃ¤nger*in": "partnerName", "Betrag (â¬)": 'amount.value',
-                         "Buchungsdatum": "booking",
-                         "Verwendungszweck": "reference", "GlÃ¤ubiger-ID": "partnerAccount.iban"}, inplace=True)
-
-            # file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
+                columns={'Auftraggeber / Begünstigter': "partnerName", 'Betrag (EUR)': 'amount.value', "Buchungstag": "booking",
+                         "Verwendungszweck": "reference", "Gläubiger-ID": "partnerAccount.iban"}, inplace=True)
+            
+            # try: 
+            #    file_df.rename(
+            #        columns={"ZahlungsempfÃ¤nger*in": "partnerName", "Betrag (â¬)": 'amount.value',
+            #                "Buchungsdatum": "booking",
+            #               "Verwendungszweck": "reference", "GlÃ¤ubiger-ID": "partnerAccount.iban"}, inplace=True)
+  
+                
+            # file_df.drop(file_df["Tagessaldo" in file_df.reference].index, inplace=True) # this line does not work, filter manually
+            file_df["booking"] = pd.to_datetime(file_df["booking"], format="%Y-%m-%d")
             # file_df["amount.value"] = file_df["amount.value"].str.replace("Â â¬", "").str.replace(".", "").str.replace(",", ".").astype(float)
             file_df["amount.value"] = file_df["amount.value"].astype(float)
-            file_df.insert(4, "amount.currency", "EUR")
-            file_df.insert(1, "account", "DKB Konto")
-
+            try:
+                file_df.insert(4, "amount.currency", "EUR")
+                file_df.insert(1, "account", "DKB Konto")
+            except:
+                print("AMOUNT.CURRENCY already exists")
+                
         if filename.endswith('.csv') and '4748' in filename:
             # DKB Kreditkarte Importer
             file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
