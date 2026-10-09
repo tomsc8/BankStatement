@@ -2,12 +2,11 @@ import os
 import shutil
 from datetime import datetime
 
-import fasttext
 import pandas as pd
 
 from config import CONFIG, path
-from importers import FIELDS, combine_statements, new_transactions, read_statement
-from sharedfunctions import prep_fasttext
+from classifier import Classifier, has_category
+from importers import FIELDS, combine_statements, ensure_ids, new_transactions, read_statement
 
 # specify filename which holds complete history of transaction data
 history_filename = path(CONFIG["history_file"])
@@ -39,24 +38,21 @@ input_df = new_transactions(hist_df, input_df).reset_index(drop=True)
 print(f"{len(input_df)} new transactions")
 
 # classify new transactions and history entries which are still missing a category
-model = fasttext.load_model(modelfile)
-
-
-def classify(df):
-    texts = prep_fasttext(df[FIELDS].copy())["fasttext"]
-    labels, probabilities = model.predict(texts.tolist(), k=1)
-    categories = [l[0].replace("__label__", "") if p[0] >= 0.5 else "" for l, p in zip(labels, probabilities)]
-    return categories, [round(float(p[0]), 3) for p in probabilities]
-
+classifier = Classifier(modelfile, hist_df)
+COLUMNS = ["category", "probability", "source"]
 
 if not input_df.empty:
-    input_df["category"], input_df["probability"] = classify(input_df)
-    print(input_df[["booking", "account", "amount.value", "category"]])
+    input_df[COLUMNS] = classifier.classify(input_df)
+    print(input_df[["booking", "account", "amount.value", "category", "source"]])
+    print(input_df["source"].value_counts().to_string())
     input_df.to_excel(new_import_filename, sheet_name="Sheet1", index=False)
 
-uncategorized = hist_df["category"].isna() | (hist_df["category"].astype(str).str.strip() == "")
+for column in COLUMNS:
+    if column not in hist_df.columns:
+        hist_df[column] = pd.NA
+uncategorized = ~has_category(hist_df)
 if uncategorized.any():
-    hist_df.loc[uncategorized, "category"], hist_df.loc[uncategorized, "probability"] = classify(hist_df[uncategorized])
+    hist_df.loc[uncategorized, COLUMNS] = classifier.classify(hist_df[uncategorized])
     found = (hist_df.loc[uncategorized, "category"] != "").sum()
     print(f"{found} of {uncategorized.sum()} uncategorized history entries got a category")
 
@@ -65,7 +61,7 @@ if os.path.exists(history_filename):
     backup = history_filename.replace(".xlsx", datetime.now().strftime("_%Y%m%d-%H%M%S.backup.xlsx"))
     shutil.copy2(history_filename, backup)
     print(f"backup written to {backup}")
-df = pd.concat([hist_df, input_df], ignore_index=True)
+df = ensure_ids(pd.concat([hist_df, input_df], ignore_index=True))
 # mark transfers between own accounts, so they can be excluded from income and spending
 df["transfer"] = df["category"].isin(CONFIG.get("transfer_categories", []))
 df.sort_values(["booking", "account", "amount.value", "reference"], inplace=True)

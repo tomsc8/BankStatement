@@ -8,5 +8,25 @@
   "legacy_accounts": {
     "Sparkasse": "Sparkasse (alt)"
   },
-  "transfer_categories": ["Haushaltskonto", "Kreditkarte"]
+  "transfer_categories": [
+    "Haushaltskonto",
+    "Kreditkarte",
+    "Vermoegensanlage",
+    "Konto"
+  ],
+  "household": {
+    "account": "DKB Konto",
+    "ibans": [
+      "DE00 0000 0000 0000 0000 00"
+    ],
+    "members": [
+      "lastname1",
+      "lastname2"
+    ],
+    "contribution_keywords": [
+      "haushaltskonto"
+    ],
+    "contribution_category": "Haushaltskonto",
+    "cash_category": "Bargeld"
+  }
 }

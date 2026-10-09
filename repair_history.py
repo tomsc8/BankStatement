@@ -15,7 +15,7 @@ import re
 import pandas as pd
 
 from config import CONFIG, path
-from importers import KEY, combine_statements, new_transactions, read_statement, similarity, text_of
+from importers import KEY, combine_statements, ensure_ids, new_transactions, read_statement, similarity, text_of
 
 history_filename = path(CONFIG["history_file"])
 repaired_filename = history_filename.replace(".xlsx", "_repaired.xlsx")
@@ -133,6 +133,7 @@ added = pd.concat(added) if added else pd.DataFrame()
 log = pd.concat([hist[hist["repair"] != ""], added]).sort_values(["repair", "account", "booking"])
 repaired = pd.concat([hist.drop(index=removed), added], ignore_index=True)
 repaired.sort_values(["booking", "account", "amount.value", "reference"], inplace=True)
+repaired = ensure_ids(repaired)
 
 with pd.ExcelWriter(repaired_filename) as writer:
     repaired.to_excel(writer, sheet_name="Sheet1", index=False)

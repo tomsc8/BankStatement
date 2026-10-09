@@ -215,3 +215,15 @@ def combine_statements(frames):
     for df in frames:
         combined = df if combined is None else pd.concat([combined, new_transactions(combined, df)])
     return combined.reset_index(drop=True)
+
+
+def ensure_ids(df):
+    # stable row ids, so that review decisions can be applied to exactly the reviewed transaction
+    if "id" not in df.columns:
+        df["id"] = pd.NA
+    ids = pd.to_numeric(df["id"], errors="coerce")
+    missing = ids.isna()
+    start = int(ids.max()) + 1 if ids.notna().any() else 1
+    ids[missing] = range(start, start + missing.sum())
+    df["id"] = ids.astype(int)
+    return df
