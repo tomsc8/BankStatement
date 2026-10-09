@@ -8,6 +8,8 @@ usage: python apply_review.py [category_audit.xlsx] [--history FILE]
     (edit the "suggested" column to correct it), a category in "decision" overrides it, "-" keeps the current one
   - rows below the marker, or all rows without a marker: decision "x" takes the suggestion, any other text is used
     as category, empty keeps the current one
+- New merchants sheet: "category" (or x = take the suggestion) is set for all uncategorized transactions of that
+  recipient
 A timestamped backup of the history is written first.
 """
 import argparse
@@ -16,6 +18,7 @@ from datetime import datetime
 
 import pandas as pd
 
+from classifier import features, has_category, is_member_transfer
 from config import CONFIG, path
 
 parser = argparse.ArgumentParser()
@@ -23,7 +26,7 @@ parser.add_argument("review", nargs="?", default=path("category_audit.xlsx"))
 parser.add_argument("--history", default=path(CONFIG["history_file"]))
 args = parser.parse_args()
 
-sheets = pd.read_excel(args.review, sheet_name=["Review", "Renames"], dtype=str)
+sheets = pd.read_excel(args.review, sheet_name=None, dtype=str)
 hist = pd.read_excel(args.history, sheet_name="Sheet1")
 before = hist["category"].copy()
 
@@ -56,6 +59,22 @@ if unknown:
     raise SystemExit(f"ids not found in {args.history}: {sorted(unknown)[:10]}")
 mask = hist["id"].isin(decided)
 hist.loc[mask, "category"] = hist.loc[mask, "id"].map(decided)
+
+# new merchants: the category is set for all uncategorized transactions of that recipient
+merchants = sheets.get("New merchants", pd.DataFrame(columns=["merchant", "suggested", "category"])).fillna("")
+open_rows = ~has_category(hist)
+f = features(hist)
+member = pd.Series([is_member_transfer(r, ft, CONFIG.get("household")) for (_, r), ft in zip(hist.iterrows(), f.itertuples())],
+                   index=hist.index)
+merchant_count = 0
+for _, m in merchants.iterrows():
+    category = m["suggested"].strip() if m["category"].strip().lower() == "x" else m["category"].strip()
+    if not category:
+        continue
+    rows = open_rows & ~member & (f["cluster"] == m["merchant"])
+    hist.loc[rows, "category"] = category
+    hist.loc[rows, "source"] = "review"
+    merchant_count += rows.sum()
 hist.loc[mask, "source"] = "review"
 hist["transfer"] = hist["category"].isin(CONFIG.get("transfer_categories", []))
 
@@ -63,5 +82,6 @@ changed = (hist["category"].fillna("") != before.fillna("")).sum()
 backup = args.history.replace(".xlsx", datetime.now().strftime("_%Y%m%d-%H%M%S.backup.xlsx"))
 shutil.copy2(args.history, backup)
 hist.to_excel(args.history, sheet_name="Sheet1", index=False)
-print(f"{len(renames)} renames, {len(decided)} review decisions, {changed} transactions changed")
+print(f"{len(renames)} renames, {len(decided)} review decisions, {merchant_count} transactions of new merchants, "
+      f"{changed} transactions changed")
 print(f"backup written to {backup}, {args.history} updated")

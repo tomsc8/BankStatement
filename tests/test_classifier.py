@@ -50,3 +50,19 @@ def test_fixed_category():
     rules = [{"pattern": "amazon|amzn", "category": "Shopping"}]
     assert fixed_category("amazon payments europe 303-123 amzn mktp de", rules) == "Shopping"
     assert fixed_category("billa dankt", rules) is None
+
+
+def test_member_transfers_in_household_account():
+    from classifier import is_member_transfer
+    df = pd.DataFrame([{"account": "Haushalt", "amount.value": -31, "partnerName": "Max Muster", "reference": "Bouldern",
+                        "partnerAccount.iban": "AT00"}])
+    assert is_member_transfer(df.iloc[0], next(features(df).itertuples()), HOUSEHOLD)
+    df.loc[0, "account"] = "Giro"
+    assert not is_member_transfer(df.iloc[0], next(features(df).itertuples()), HOUSEHOLD)
+
+
+def test_member_named_only_in_reference_is_no_member_transfer():
+    from classifier import is_member_transfer
+    df = pd.DataFrame([{"account": "Haushalt", "amount.value": -210, "partnerName": "Tennis Academy",
+                        "reference": "Tenniscamp Samuel Muster", "partnerAccount.iban": ""}])
+    assert not is_member_transfer(df.iloc[0], next(features(df).itertuples()), HOUSEHOLD)

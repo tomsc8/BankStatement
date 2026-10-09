@@ -5,6 +5,8 @@ usage: python audit_categories.py [history.xlsx] [--categories CAT ...]
 Writes category_audit.xlsx with the sheets
 - Review: one row per transaction to check, with the current and the suggested category and the reason.
   Fill the "decision" column: x = take the suggestion, a category name = use that one, empty = keep as is.
+- New merchants: uncategorized transactions of recipients never seen before, one row per recipient. Fill "category"
+  (or x = take the suggestion); it is set for all their transactions and later imports recognize the recipient.
 - Renames: category renames applied to all transactions (fill "to", empty = keep)
 - Overview: every category with count, period, money in/out and whether it counts as transfer
 - Category names: near identical category names and rarely used categories
@@ -29,7 +31,8 @@ import numpy as np
 import pandas as pd
 from unidecode import unidecode
 
-from classifier import features, fixed_mask, has_category, household_rule, rule_categories
+from classifier import (MIN_PROBABILITY, features, fixed_mask, has_category, household_rule, is_member_transfer,
+                        rule_categories)
 from config import CONFIG, path
 
 parser = argparse.ArgumentParser()
@@ -172,28 +175,53 @@ for _, row in df[df["category"].isin(args.categories)].iterrows():
     add(row, row["predicted"] if row["predicted"] != row["category"] else "", f"review category {row['category']}",
         row["confidence"])
 
-# transactions without category (the classifier was not sure enough), suggested by a model trained on all data
+# transactions without category: recipients never seen before are grouped per recipient on the sheet "New merchants",
+# the others (transfers with the household members, unclear purposes) are listed on the review sheet
 open_rows = hist[~has_category(hist) & ~fixed_mask(hist)].copy()
+new_merchants = pd.DataFrame(columns=["merchant", "transactions", "total", "first", "last", "accounts", "examples",
+                                      "suggested", "confidence", "category"])
 if not open_rows.empty:
     open_rows["booking"] = open_rows["booking"].astype(str).str[:10]
     open_rows["category"] = ""
+    of = features(open_rows)
     with tempfile.TemporaryDirectory() as tmp:
         train_file = os.path.join(tmp, "train.txt")
         train = df[(df["text"] != "") & ~df["category"].isin(RULE_CATEGORIES)]
         ("__label__" + train["category"] + " " + train["text"]).to_csv(train_file, index=False, header=False,
                                                                        quoting=csv.QUOTE_NONE, escapechar="\\")
         model = fasttext.train_supervised(train_file, epoch=50, lr=0.5, minn=3, maxn=5, seed=42, verbose=0)
-        labels, probs = model.predict(features(open_rows)["text"].tolist(), k=1)
-    for (_, row), l, p in zip(open_rows.iterrows(), labels, probs):
-        review[("open", row.name)] = {**row[COLUMNS].to_dict(), "suggested": l[0].replace("__label__", ""),
-                                      "confidence": round(float(p[0]), 3), "reason": "uncategorized", "decision": ""}
+        labels, probs = model.predict(of["text"].tolist(), k=1)
+    open_rows["suggested"] = [l[0].replace("__label__", "") for l in labels]
+    open_rows["confidence"] = [round(float(p[0]), 3) for p in probs]
+    member = pd.Series([is_member_transfer(r, ft, household) for (_, r), ft in zip(open_rows.iterrows(), of.itertuples())],
+                       index=open_rows.index)
+    grouped = (of["cluster"] != "") & ~member
+    clusters = []
+    for cluster, g in open_rows[grouped].groupby(of.loc[grouped, "cluster"]):
+        best = g.sort_values("confidence", ascending=False).iloc[0]
+        refs = (g["partnerName"].fillna("").astype(str) + " | " + g["reference"].fillna("").astype(str)).str.replace(r"\s+", " ", regex=True)
+        clusters.append({"merchant": cluster, "transactions": len(g), "total": round(g["amount.value"].sum(), 2),
+                         "first": g["booking"].min(), "last": g["booking"].max(),
+                         "accounts": ", ".join(sorted(g["account"].astype(str).unique())),
+                         "examples": " || ".join(refs.str[:60].unique()[:3]),
+                         "suggested": best["suggested"] if best["confidence"] >= MIN_PROBABILITY else "",
+                         "confidence": best["confidence"], "category": ""})
+    if clusters:
+        new_merchants = pd.DataFrame(clusters).sort_values(["transactions", "total"], ascending=[False, True])
+    for _, row in open_rows[~grouped].iterrows():
+        review[("open", row.name)] = {**row[COLUMNS].to_dict(),
+                                      "suggested": row["suggested"] if row["confidence"] >= MIN_PROBABILITY else "",
+                                      "confidence": row["confidence"], "reason": "uncategorized", "decision": ""}
 
 review = pd.DataFrame(review.values(), columns=COLUMNS + ["suggested", "confidence", "reason", "decision"])
-review = review.sort_values(["decision", "reason", "category", "booking"], ascending=[False, True, True, True])
+review["sort_partner"] = review["partnerName"].fillna("").astype(str).str.lower()
+review = review.sort_values(["decision", "reason", "category", "sort_partner", "booking"], ascending=[False, True, True, True, True])
+review = review.drop(columns="sort_partner")
 
 output = path("category_audit.xlsx")
 with pd.ExcelWriter(output) as writer:
     review.to_excel(writer, sheet_name="Review", index=False)
+    new_merchants.to_excel(writer, sheet_name="New merchants", index=False)
     renames.to_excel(writer, sheet_name="Renames", index=False)
     overview.to_excel(writer, sheet_name="Overview", index=False)
     names.to_excel(writer, sheet_name="Category names", index=False)
@@ -205,4 +233,5 @@ print(f"similar category names: {len(renames)} ({(renames['to'] != '').sum()} sp
 print("transactions to review by reason:")
 print(review.assign(kind=review["reason"].str.split(";").str[0].str.split(":").str[0], preselected=review["decision"] == "x")
       .groupby(["kind", "preselected"]).size().unstack(fill_value=0).to_string())
+print(f"new merchants: {len(new_merchants)} recipients with {int(new_merchants['transactions'].sum()) if len(new_merchants) else 0} transactions")
 print(f"written to {output}")

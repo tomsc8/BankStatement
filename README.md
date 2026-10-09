@@ -34,9 +34,13 @@ Every script has a `.sh` (Ubuntu) and a `.bat` (Windows) launcher that uses the 
 - `apply_review` applies these decisions to the history (by row id, with a backup first).
 
 ## Classification
+0. Fixed: transactions matching a pattern of `fixed_categories` (e.g. marketplaces) get that category.
 1. Lookup: a transaction whose text, counterparty IBAN or counterparty name always had the same category in the
    history gets that category, so recurring recipients are recognized even in rarely used categories.
-2. Model: all other transactions are classified by the fastText model.
+2. Model: transactions of known recipients without a unique category are classified by the fastText model when
+   it is at least 90 % sure. Recipients that were never categorized before are not guessed: they stay open and are
+   grouped per recipient on the "New merchants" sheet of the audit. One category per recipient there is applied to
+   all its transactions, later imports then recognize the recipient by lookup.
 3. Household rules (`household` in config.json): in the household account the real purpose is booked and incoming
    contributions are the contribution category; cash is only used for cash withdrawals. In the members' own accounts
    transfers to the household account are contributions and reimbursements from it are cash, so they cancel out the
@@ -56,6 +60,7 @@ duplicates. Empty exports count as periods without transactions.
   (e.g. a closed account that was imported under the same name)
 - `transfer_categories`: categories of transfers between your own accounts, marked in the `transfer` column
   so they can be excluded from income and spending
+- `fixed_categories`: list of `{"pattern": regex, "category": ...}` applied before lookup and model
 - `household`: household account, its IBANs, the members' last names, contribution keywords and the
   contribution and cash categories used by the household rules
 
