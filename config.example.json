@@ -1,0 +1,12 @@
+{
+  "history_file": "all_statements.xlsx",
+  "accounts": {
+    "sparkasse": "Sparkasse",
+    "dkb_giro": "DKB Konto",
+    "dkb_credit": "DKB Kreditkarte"
+  },
+  "legacy_accounts": {
+    "Sparkasse": "Sparkasse (alt)"
+  },
+  "transfer_categories": ["Haushaltskonto", "Kreditkarte"]
+}

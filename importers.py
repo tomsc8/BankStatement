@@ -7,6 +7,8 @@ import re
 import numpy as np
 import pandas as pd
 
+from config import CONFIG
+
 # define with columns to use after import
 FIELDS = ["booking", "partnerName", "partnerAccount.iban", "amount.value", "amount.currency", "reference", "account", ]
 
@@ -34,24 +36,37 @@ def read_text(filename):
         return raw.decode('latin_1')
 
 
-def read_sparkasse(filename):
-    # Sparkasse (George) json export
-    with open(filename, encoding='utf-8') as f:
-        data = json.load(f)
-    if not data:
+def header_index(lines, *columns):
+    # index of the first line that contains all given column names, None if there is none
+    return next((i for i, line in enumerate(lines) if all(c in line for c in columns)), None)
+
+
+def csv_period(lines):
+    # statement period from the csv preamble: "Zeitraum:";"01.01.2025 - 31.12.2025" or "Von:";".." / "Bis:";".."
+    head = "\n".join(lines[:10])
+    found = re.search(r'Zeitraum:";"(\d\d\.\d\d\.\d{4}) - (\d\d\.\d\d\.\d{4})', head)
+    if not found:
+        found = re.search(r'Von:";"(\d\d\.\d\d\.\d{4})".*\n"Bis:";"(\d\d\.\d\d\.\d{4})', head)
+    if not found:
         return None
+    return tuple(pd.to_datetime(d, format="%d.%m.%Y").strftime("%Y-%m-%d") for d in found.groups())
+
+
+def read_sparkasse(filename, data):
+    # Sparkasse (George) json export
+    found = re.search(r"_(\d{4}-\d\d-\d\d)_(\d{4}-\d\d-\d\d)", os.path.basename(filename))
+    period = found.groups() if found else None
+    if not data:
+        return pd.DataFrame(columns=FIELDS), period
     df = pd.json_normalize(data)
     df["amount.value"] = df["amount.value"].div(100).round(2)
-    df["account"] = "Sparkasse"
+    df["account"] = CONFIG["accounts"]["sparkasse"]
     df["booking"] = pd.to_datetime(df["booking"].str.split('T').str[0], format="%Y-%m-%d")
-    return df
+    return df, period
 
 
-def read_dkb_giro(filename):
-    # DKB Girokonto importer for the old (Buchungstag, latin-1) and new (Buchungsdatum, utf-8) export format.
-    # header position depends on the export mask, so search for the header line instead of a fixed row.
-    lines = read_text(filename).splitlines()
-    header = next(i for i, line in enumerate(lines) if line.startswith(('"Buchungsdatum"', '"Buchungstag"')))
+def read_dkb_giro(lines, header):
+    # DKB Girokonto importer for the old (Buchungstag, latin-1) and new (Buchungsdatum, utf-8) export format
     df = pd.read_csv(io.StringIO("\n".join(lines[header:])), delimiter=';', quoting=1, dtype=str,
                      keep_default_na=False)
 
@@ -74,28 +89,28 @@ def read_dkb_giro(filename):
         df["partnerName"] = np.where(df["amount.value"] < 0, df["Zahlungsempfänger*in"], df["Zahlungspflichtige*r"])
     df["booking"] = parse_german_date(df["booking"])
     df["amount.currency"] = "EUR"
-    df["account"] = "DKB Konto"
+    df["account"] = CONFIG["accounts"]["dkb_giro"]
     return df
 
 
-def read_dkb_credit(filename):
+def read_dkb_credit(lines, header):
     # DKB Kreditkarte importer
-    lines = read_text(filename).splitlines()
-    df = pd.read_csv(io.StringIO("\n".join(lines[4:])), delimiter=';', quoting=1, dtype=str, keep_default_na=False)
+    df = pd.read_csv(io.StringIO("\n".join(lines[header:])), delimiter=';', quoting=1, dtype=str,
+                     keep_default_na=False)
     df.rename(columns={'Betrag (EUR)': 'amount.value', "Belegdatum": "booking", "Beschreibung": "reference"}, inplace=True)
     df = df[df["booking"] != ""]
     df["booking"] = parse_german_date(df["booking"])
     df["amount.value"] = parse_german_amount(df["amount.value"])
     df["amount.currency"] = "EUR"
     df["partnerName"] = ""
-    df["account"] = "DKB Kreditkarte Thomas"
+    df["account"] = CONFIG["accounts"]["dkb_credit"]
     df["partnerAccount.iban"] = ""
     return df
 
 
-def read_cardcomplete(filename):
-    # card complete importer
-    df = pd.read_csv(io.StringIO(read_text(filename)), skiprows=1, decimal=',', thousands='.', dtype={"DATUM-DATE": str})
+def read_cardcomplete(lines, header):
+    # card complete importer, the card number is used as account
+    df = pd.read_csv(io.StringIO("\n".join(lines[header:])), decimal=',', thousands='.', dtype={"DATUM-DATE": str})
     df.rename(columns={"HAENLDERNAME-MERCHANT_NAME": "partnerName", 'BETRAG-AMOUNT': 'amount.value',
                        "WAEHRUNG-CURRENCY": "amount.currency", "DATUM-DATE": "booking",
                        "KARTENNUMMER-CARD_NUMBER": "account"}, inplace=True)
@@ -106,22 +121,44 @@ def read_cardcomplete(filename):
 
 
 def read_statement(filename):
-    # pick importer by file name, returns None for unknown or empty files
-    name = os.path.basename(filename)
-    if name.endswith('.json'):
-        df = read_sparkasse(filename)
-    elif name.endswith('.csv') and '10527' in name:
-        df = read_dkb_giro(filename)
-    elif name.endswith('.csv') and '4748' in name:
-        df = read_dkb_credit(filename)
-    elif name.endswith('.csv') and 'transactions' in name:
-        df = read_cardcomplete(filename)
+    """Read a bank export, the format is recognized by its content.
+
+    Returns a DataFrame with FIELDS (empty for exports without transactions) and the covered period
+    (first and last day, or None if unknown) and the account in df.attrs, or None for unsupported files.
+    """
+    period = None
+    if filename.endswith('.json'):
+        with open(filename, encoding='utf-8') as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(data, list) or (data and "booking" not in data[0]):
+            return None
+        df, period = read_sparkasse(filename, data)
+        account = CONFIG["accounts"]["sparkasse"]
+    elif filename.endswith('.csv'):
+        lines = read_text(filename).splitlines()
+        period = csv_period(lines)
+        if (i := header_index(lines, '"Buchungsdatum"', 'Zahlungsempf')) is not None or \
+                (i := header_index(lines, '"Buchungstag"', 'Auftraggeber / Beg')) is not None:
+            df, account = read_dkb_giro(lines, i), CONFIG["accounts"]["dkb_giro"]
+        elif (i := header_index(lines, '"Belegdatum"', '"Beschreibung"')) is not None:
+            df, account = read_dkb_credit(lines, i), CONFIG["accounts"]["dkb_credit"]
+        elif (i := header_index(lines, 'DATUM-DATE', 'HAENLDERNAME-MERCHANT_NAME')) is not None:
+            df = read_cardcomplete(lines, i)
+            account = df["account"].iloc[0] if not df.empty else None
+        else:
+            return None
     else:
         return None
-    if df is None or df.empty:
-        return None
-    df = df[FIELDS].copy()
-    return normalize(df)
+
+    df = normalize(df[FIELDS].copy())
+    if period is None and not df.empty:
+        period = (df["booking"].min(), df["booking"].max())
+    df.attrs["period"] = period
+    df.attrs["account"] = account
+    return df
 
 
 def normalize(df):
@@ -171,6 +208,9 @@ def new_transactions(existing, candidates):
 
 def combine_statements(frames):
     # combine several exports that may overlap (e.g. two exports of the same year)
+    frames = [df for df in frames if not df.empty]
+    if not frames:
+        return pd.DataFrame(columns=FIELDS)
     combined = None
     for df in frames:
         combined = df if combined is None else pd.concat([combined, new_transactions(combined, df)])

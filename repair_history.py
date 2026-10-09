@@ -1,23 +1,25 @@
-"""Check all_statements.xlsx against the bank exports in /input and write a repaired copy.
+"""Check the history file against the bank exports in /input and write a repaired copy.
 
-For every account and day covered by an export, transactions are compared by (account, booking, amount):
+For every account and day covered by an export (empty exports count as covered without transactions),
+transactions are compared by (account, booking, amount):
 - transactions missing in the history are added (without category, import.py classifies them on its next run)
 - surplus history rows, where the export holds fewer identical transactions, are removed as double imports
-- history rows without any counterpart in the export are kept and flagged
-Outside the covered periods, rows that look like double imports are flagged but kept.
-Text garbled by reading utf-8 files as latin-1 is repaired. all_statements.xlsx itself is never modified.
+- history rows without any counterpart in the export are moved to the legacy account configured in
+  config.json ("legacy_accounts"), e.g. a closed account that was imported under the same name, or flagged
+Rows that could not be verified against an export are flagged if they look like double imports.
+Text garbled by reading utf-8 files as latin-1 is repaired. The history file itself is never modified.
 """
 import os
 import re
 
 import pandas as pd
 
-from importers import KEY, combine_statements, read_statement, similarity, text_of, new_transactions
+from config import CONFIG, path
+from importers import KEY, combine_statements, new_transactions, read_statement, similarity, text_of
 
-basedir = os.path.dirname(os.path.abspath(__file__))
-history_filename = os.path.join(basedir, "all_statements.xlsx")
-repaired_filename = os.path.join(basedir, "all_statements_repaired.xlsx")
-inputdir = os.path.join(basedir, "input")
+history_filename = path(CONFIG["history_file"])
+repaired_filename = history_filename.replace(".xlsx", "_repaired.xlsx")
+inputdir = path("input")
 TEXT_COLUMNS = ["partnerName", "reference", "fasttext"]
 
 
@@ -65,6 +67,13 @@ def probable_doubles(df):
     return doubles
 
 
+def covered_days(periods):
+    days = set()
+    for start, end in periods:
+        days.update(pd.date_range(start, end).strftime("%Y-%m-%d"))
+    return days
+
+
 hist = pd.read_excel(history_filename, sheet_name="Sheet1")
 hist["booking"] = pd.to_datetime(hist["booking"].astype(str).str[:10]).dt.strftime("%Y-%m-%d")
 hist["amount.value"] = hist["amount.value"].round(2)
@@ -73,33 +82,40 @@ for column in TEXT_COLUMNS:
         hist[column] = hist[column].map(fix_mojibake)
 hist["repair"] = ""
 
-# exports per account, with the days each export covers
-exports, covered = {}, {}
+# exports per account, with the periods they cover
+exports, periods = {}, {}
 for filename in sorted(os.listdir(inputdir)):
     df = read_statement(os.path.join(inputdir, filename))
-    if df is None:
+    if df is None or df.attrs["account"] is None:
         continue
-    account = df["account"].iloc[0]
+    account = df.attrs["account"]
     exports.setdefault(account, []).append(df)
-    days = pd.date_range(df["booking"].min(), df["booking"].max()).strftime("%Y-%m-%d")
-    covered.setdefault(account, set()).update(days)
+    if df.attrs["period"]:
+        periods.setdefault(account, []).append(df.attrs["period"])
 
-added, removed = [], []
+added, removed, verified = [], [], set()
 for account, frames in exports.items():
     export = combine_statements(frames)
-    in_range = hist[(hist["account"] == account) & hist["booking"].isin(covered[account])]
-    export = export[export["booking"] <= hist.loc[hist["account"] == account, "booking"].max()]
+    last_history_day = hist.loc[hist["account"] == account, "booking"].max()
+    days = {d for d in covered_days(periods.get(account, [])) if d <= last_history_day}
+    in_range = hist[(hist["account"] == account) & hist["booking"].isin(days)]
+    export = export[export["booking"].isin(days)]
     print(f"{account}: comparing {len(in_range)} history rows with {len(export)} exported transactions")
 
-    missing = new_transactions(in_range, export)
-    added.append(missing.assign(repair="added: missing in history"))
+    added.append(new_transactions(in_range, export).assign(repair="added: missing in history"))
 
     export_groups = {k: g for k, g in export.groupby(KEY)}
+    legacy = CONFIG.get("legacy_accounts", {}).get(account)
     for k, group in in_range.groupby(KEY):
         exp = export_groups.get(k)
         if exp is None:
-            hist.loc[group.index, "repair"] = "flag: not in export"
+            if legacy:
+                hist.loc[group.index, "account"] = legacy
+                hist.loc[group.index, "repair"] = f"moved: not in export of {account}"
+            else:
+                hist.loc[group.index, "repair"] = "flag: not in export"
             continue
+        verified.update(group.index)
         if len(group) <= len(exp):
             continue
         # keep the history rows that match the exported transactions best, the rest are double imports
@@ -110,13 +126,12 @@ for account, frames in exports.items():
         removed.extend(i for i in group.index if i not in keep)
 
 hist.loc[removed, "repair"] = "removed: double import"
-outside = hist[~hist.apply(lambda r: r["booking"] in covered.get(r["account"], ()), axis=1)]
-flagged = probable_doubles(outside)
-hist.loc[flagged, "repair"] = "flag: probable double import"
+for idx in probable_doubles(hist.drop(index=list(verified))):
+    hist.loc[idx, "repair"] = (hist.loc[idx, "repair"] + "; " if hist.loc[idx, "repair"] else "") + "flag: probable double import"
 
 added = pd.concat(added) if added else pd.DataFrame()
 log = pd.concat([hist[hist["repair"] != ""], added]).sort_values(["repair", "account", "booking"])
-repaired = pd.concat([hist.drop(index=removed), added])
+repaired = pd.concat([hist.drop(index=removed), added], ignore_index=True)
 repaired.sort_values(["booking", "account", "amount.value", "reference"], inplace=True)
 
 with pd.ExcelWriter(repaired_filename) as writer:

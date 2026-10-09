@@ -5,21 +5,21 @@ from datetime import datetime
 import fasttext
 import pandas as pd
 
+from config import CONFIG, path
 from importers import FIELDS, combine_statements, new_transactions, read_statement
 from sharedfunctions import prep_fasttext
 
-basedir = os.path.dirname(os.path.abspath(__file__))
 # specify filename which holds complete history of transaction data
-history_filename = os.path.join(basedir, "all_statements.xlsx")
-new_import_filename = os.path.join(basedir, "new_import.xlsx")
-inputdir = os.path.join(basedir, "input")
-modelfile = os.path.join(basedir, "model", "bs.model")
+history_filename = path(CONFIG["history_file"])
+new_import_filename = path("new_import.xlsx")
+inputdir = path("input")
+modelfile = path(os.path.join("model", "bs.model"))
 
 # read all supported files from /input, overlapping exports are combined without double counting
 frames = []
 for filename in sorted(os.listdir(inputdir)):
     df = read_statement(os.path.join(inputdir, filename))
-    if df is None:
+    if df is None or df.empty:
         print(f"skipped {filename}")
         continue
     print(f"read {len(df):5} transactions from {filename}")
@@ -66,6 +66,8 @@ if os.path.exists(history_filename):
     shutil.copy2(history_filename, backup)
     print(f"backup written to {backup}")
 df = pd.concat([hist_df, input_df], ignore_index=True)
+# mark transfers between own accounts, so they can be excluded from income and spending
+df["transfer"] = df["category"].isin(CONFIG.get("transfer_categories", []))
 df.sort_values(["booking", "account", "amount.value", "reference"], inplace=True)
 df.to_excel(history_filename, sheet_name="Sheet1", index=False)
 print(f"{history_filename} now holds {len(df)} transactions")

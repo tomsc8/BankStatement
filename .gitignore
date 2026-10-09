@@ -4,8 +4,10 @@
 *.ods
 *.backup
 *.json
+!config.example.json
 *.txt
 !requirements.txt
+!requirements-dev.txt
 input/
 !demo/*.xlsx
 model/
