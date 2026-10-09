@@ -5,7 +5,7 @@ from importers import ensure_ids
 
 HOUSEHOLD = {"account": "Haushalt", "ibans": ["DE00 1111 2222"], "members": ["muster"],
              "contribution_keywords": ["haushaltskonto"], "contribution_category": "Haushaltskonto", "cash_category": "Bargeld"}
-PREDICTION = [("Bargeld", 0.6), ("Essen", 0.3), ("Lebensmittel", 0.1)]
+PREDICTION = [("Essen", 0.7), ("Lebensmittel", 0.3)]  # model predictions never contain rule categories
 
 
 def rule(account, amount, partner, reference, category, iban=""):
@@ -28,10 +28,12 @@ def test_reimbursement_from_household_gets_real_purpose():
 
 
 def test_cash_withdrawal_stays_cash():
-    assert rule("Haushalt", -100, "", "Auszahlung Geldautomat", "Bargeld") is None
+    assert rule("Haushalt", -100, "", "Auszahlung Geldautomat", "Lebensmittel")[0] == "Bargeld"
+    assert rule("Giro", -50, "", "ATM 50,00 AT K1 19.05.", "Essen")[0] == "Bargeld"
 
 
 def test_own_account_transfers_with_household():
+    # reimbursement from the household is cash in the own account, offsetting the own cash withdrawals
     assert rule("Giro", 26, "Haushalt", "Heuriger", "Essen", iban="DE0011112222")[0] == "Bargeld"
     assert rule("Giro", -800, "Haushalt", "Haushaltskonto", "Lebensmittel", iban="DE00 1111 2222")[0] == "Haushaltskonto"
     assert rule("Giro", -20, "Shop", "Einkauf", "Lebensmittel") is None

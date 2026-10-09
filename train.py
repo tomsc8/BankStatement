@@ -15,6 +15,7 @@ import fasttext
 import numpy as np
 import pandas as pd
 
+from classifier import rule_categories
 from config import CONFIG, path
 from sharedfunctions import prep_fasttext
 
@@ -38,6 +39,8 @@ prep_df["category"] = prep_df["category"].astype(str).str.strip()
 prep_df = prep_fasttext(prep_df)
 # entries without any text besides the label carry no information
 prep_df = prep_df[prep_df["fasttext"].str.split().str.len() > 1]
+# categories set by the household rules depend on account and counterparty, not on the text
+prep_df = prep_df[~prep_df["category"].isin(rule_categories(CONFIG.get("household")))]
 
 # stratified split, small categories are used for training only
 rng = np.random.default_rng(SEED)

@@ -47,7 +47,9 @@ class Classifier:
 
     def model_predictions(self, texts, k=10):
         labels, probabilities = self.model.predict(list(texts), k=k)
-        return [[(l.replace("__label__", ""), float(p)) for l, p in zip(ls, ps)] for ls, ps in zip(labels, probabilities)]
+        excluded = rule_categories(self.household)
+        return [[(l.replace("__label__", ""), float(p)) for l, p in zip(ls, ps) if l.replace("__label__", "") not in excluded]
+                for ls, ps in zip(labels, probabilities)]
 
     def classify(self, df):
         """Return a DataFrame with category, probability and source (lookup, model, rule) for every row of df."""
@@ -62,7 +64,7 @@ class Classifier:
                     category, probability, source = self.lookup[key][value], 1.0, "lookup"
                     break
             if category is None:
-                category, probability = prediction[0]
+                category, probability = prediction[0] if prediction else ("", 0.0)
                 source = "model"
             ruled = household_rule(row, feature, category, prediction, self.household)
             if ruled is not None:
@@ -73,24 +75,35 @@ class Classifier:
         return pd.DataFrame(result, index=df.index)
 
 
+def rule_categories(h):
+    # categories that depend on account and counterparty instead of the text, set by the household rules only
+    return {h["contribution_category"], h["cash_category"]} if h else set()
+
+
 def household_rule(row, feature, category, prediction, h):
-    # category, probability and source if a household rule applies, else None
+    # category, probability and source if a household rule applies, else None.
+    # prediction: model predictions [(category, probability), ...] without the rule categories
     if not h:
         return None
     contribution, cash = h["contribution_category"], h["cash_category"]
+    amount = row["amount.value"]
+    withdrawal = amount < 0 and any(k in feature.raw for k in ATM_KEYWORDS)
     if row["account"] == h["account"]:
         member = any(m in feature.raw for m in h.get("members", []))
-        if row["amount.value"] > 0 and member and any(k in feature.ref for k in h.get("contribution_keywords", [])):
+        if amount > 0 and member and any(k in feature.ref for k in h.get("contribution_keywords", [])):
             return contribution, 1.0, "rule"
-        if row["amount.value"] > 0 and category == contribution:
+        if amount > 0 and category == contribution:
             # other payments into the household account (top ups, extra contributions)
             return None
-        if category in (contribution, cash) and not any(k in feature.raw for k in ATM_KEYWORDS):
+        if withdrawal:
+            return cash, 1.0, "rule"
+        if category in (contribution, cash) and prediction:
             # reimbursements and payments of the household are booked with their real purpose
-            for label, probability in prediction:
-                if label not in (contribution, cash):
-                    return label, probability, "rule"
+            label, probability = prediction[0]
+            return label, probability, "rule"
         return None
     if feature.iban and feature.iban in {i.replace(" ", "").upper() for i in h.get("ibans", [])}:
-        return (cash if row["amount.value"] > 0 else contribution), 1.0, "rule"
+        return (cash if amount > 0 else contribution), 1.0, "rule"
+    if withdrawal:
+        return cash, 1.0, "rule"
     return None

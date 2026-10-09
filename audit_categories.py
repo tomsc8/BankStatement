@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 from unidecode import unidecode
 
-from classifier import features, has_category, household_rule
+from classifier import features, has_category, household_rule, rule_categories
 from config import CONFIG, path
 
 parser = argparse.ArgumentParser()
@@ -95,13 +95,17 @@ for merchant, g in df[df["merchant"] != ""].groupby("merchant"):
 merchants = pd.DataFrame(merchants).sort_values(["majority_share", "transactions"], ascending=[True, False])
 
 # out of fold predictions: every transaction is predicted by a model that did not see it during training
+# categories set by the household rules depend on account and counterparty, not on the text, so the model
+# does not learn them
+household = CONFIG.get("household")
+RULE_CATEGORIES = rule_categories(household)
 rng = np.random.default_rng(42)
 df["fold"] = rng.integers(0, FOLDS, len(df))
 predictions = {}
 with tempfile.TemporaryDirectory() as tmp:
     train_file = os.path.join(tmp, "train.txt")
     for fold in range(FOLDS):
-        train = df[(df["fold"] != fold) & (df["text"] != "")]
+        train = df[(df["fold"] != fold) & (df["text"] != "") & ~df["category"].isin(RULE_CATEGORIES)]
         ("__label__" + train["category"] + " " + train["text"]).to_csv(train_file, index=False, header=False,
                                                                        quoting=csv.QUOTE_NONE, escapechar="\\")
         model = fasttext.train_supervised(train_file, epoch=50, lr=0.5, minn=3, maxn=5, seed=42, verbose=0)
@@ -112,45 +116,62 @@ with tempfile.TemporaryDirectory() as tmp:
 predictions = pd.Series(predictions)
 df["predicted"] = predictions[df.index].map(lambda p: p[0][0])
 df["confidence"] = predictions[df.index].map(lambda p: round(p[0][1], 3))
-accuracy = (df["predicted"] == df["category"]).mean()
+accuracy = (df["predicted"] == df["category"])[~df["category"].isin(RULE_CATEGORIES)].mean()
 
-# transactions to review, the first reason found per transaction determines the suggestion
+# transactions to review, the first reason found per transaction determines the suggestion.
+# clear cases are preselected with decision "x": rule based corrections, purposes the model is sure about and
+# texts that are booked consistently elsewhere
+PRESELECT_CONFIDENCE = 0.8
+PRESELECT_SHARE = 0.75
 review = {}
 
 
-def add(row, suggested, reason, decision=""):
+def add(row, suggested, reason, confidence=None, preselect=False):
     if row.name in review:
         review[row.name]["reason"] += f"; {reason}"
         return
-    review[row.name] = {**row[COLUMNS].to_dict(), "suggested": suggested, "reason": reason, "decision": decision}
+    review[row.name] = {**row[COLUMNS].to_dict(), "suggested": suggested, "confidence": confidence, "reason": reason,
+                        "decision": "x" if preselect and suggested else ""}
 
 
-household = CONFIG.get("household")
 for (idx, row), feature in zip(df.iterrows(), f.loc[df.index].itertuples()):
     ruled = household_rule(row, feature, row["category"], predictions[idx], household)
     if ruled and ruled[0] != row["category"]:
-        contribution = ruled[0] == household["contribution_category"]
-        # contributions of the members are unambiguous and preselected
-        add(row, ruled[0], "household rule: " + ("contribution" if contribution else "real purpose / own account"),
-            "x" if contribution and row["account"] == household["account"] else "")
+        category, probability, _ = ruled
+        if row["account"] != household["account"]:
+            # transfers with the household account are unambiguous, cash withdrawals booked with a purpose are kept
+            via_household = feature.iban in {i.replace(" ", "").upper() for i in household.get("ibans", [])}
+            add(row, category, "household rule: own account" + ("" if via_household else " cash withdrawal"), 1.0,
+                preselect=via_household)
+        elif category == household["contribution_category"]:
+            add(row, category, "household rule: contribution", 1.0, preselect=True)
+        else:
+            add(row, category, "household rule: real purpose", round(probability, 3),
+                preselect=probability >= PRESELECT_CONFIDENCE)
 
-same_text = 0
 for text, g in df[df["text"] != ""].groupby("text"):
     dist = g["category"].value_counts()
     if len(dist) > 1:
+        share = dist.iloc[0] / len(g)
         for _, row in g[g["category"] != dist.index[0]].iterrows():
-            add(row, dist.index[0], f"same text: {', '.join(f'{c} ({n})' for c, n in dist.items())}")
-            same_text += 1
+            add(row, dist.index[0], f"same text: {', '.join(f'{c} ({n})' for c, n in dist.items())}", round(share, 2),
+                preselect=share >= PRESELECT_SHARE and dist.iloc[0] >= 3)
 
-disagree = df[(df["predicted"] != df["category"]) & (df["confidence"] >= MIN_CONFIDENCE)]
+# the model alone is overconfident on one-off merchants, so a disagreement is only listed when the other
+# transactions with the same counterparty are mostly booked like the model suggests
+disagree = df[(df["predicted"] != df["category"]) & (df["confidence"] >= MIN_CONFIDENCE) & ~df["category"].isin(RULE_CATEGORIES)]
 for _, row in disagree.sort_values("confidence", ascending=False).iterrows():
-    add(row, row["predicted"], f"model: {row['confidence']:.2f}")
+    others = df[(df["merchant"] == row["merchant"]) & (df.index != row.name)]["category"].value_counts()
+    if row["merchant"] and len(others) and others.index[0] == row["predicted"] and others.iloc[0] >= 2:
+        add(row, row["predicted"], f"model: {row['confidence']:.2f}, counterparty mostly {row['predicted']} "
+            f"({others.iloc[0]} of {others.sum()})", row["confidence"])
 
 for _, row in df[df["category"].isin(args.categories)].iterrows():
-    add(row, row["predicted"] if row["predicted"] != row["category"] else "", f"review category {row['category']}")
+    add(row, row["predicted"] if row["predicted"] != row["category"] else "", f"review category {row['category']}",
+        row["confidence"])
 
-review = pd.DataFrame(review.values(), columns=COLUMNS + ["suggested", "reason", "decision"])
-review = review.sort_values(["reason", "category", "booking"])
+review = pd.DataFrame(review.values(), columns=COLUMNS + ["suggested", "confidence", "reason", "decision"])
+review = review.sort_values(["decision", "reason", "category", "booking"], ascending=[False, True, True, True])
 
 output = path("category_audit.xlsx")
 with pd.ExcelWriter(output) as writer:
@@ -164,5 +185,6 @@ print(f"{len(df)} categorized transactions in {len(counts)} categories, cross va
 print(f"similar category names: {len(renames)} ({(renames['to'] != '').sum()} spelling variants preselected), "
       f"rare categories: {(counts < RARE).sum()}, counterparties with several categories: {len(merchants)}")
 print("transactions to review by reason:")
-print(review["reason"].str.split(":").str[0].value_counts().to_string())
+print(review.assign(kind=review["reason"].str.split(";").str[0].str.split(":").str[0], preselected=review["decision"] == "x")
+      .groupby(["kind", "preselected"]).size().unstack(fill_value=0).to_string())
 print(f"written to {output}")
