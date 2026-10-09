@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import fasttext
@@ -28,6 +29,44 @@ FIELDS = ["booking", "partnerName", "partnerAccount.iban", "amount.value", "amou
 KEY = ["booking", "amount.value", "reference"]
 german_date = lambda x: datetime.strptime(x, '%d.%m.%y')
 
+
+def read_dkb_giro(filename):
+    # DKB Girokonto importer for the old (Buchungstag, latin-1) and new (Buchungsdatum, utf-8) export format.
+    # header position depends on the export mask, so search for the header line instead of a fixed row.
+    with open(filename, 'rb') as f:
+        raw = f.read()
+    try:
+        text = raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        text = raw.decode('latin_1')
+    lines = text.splitlines()
+    header = next(i for i, line in enumerate(lines) if line.startswith(('"Buchungsdatum"', '"Buchungstag"')))
+    df = pd.read_csv(io.StringIO("\n".join(lines[header:])), delimiter=';', quoting=1, dtype=str,
+                     keep_default_na=False)
+
+    if "Buchungsdatum" in df.columns:
+        # new format: separate payer and payee columns, pending transactions marked in Status
+        df = df[df["Status"] == "Gebucht"].copy()
+        df.rename(columns={"Buchungsdatum": "booking", "Betrag (€)": "amount.value",
+                           "IBAN": "partnerAccount.iban", "Verwendungszweck": "reference"}, inplace=True)
+    else:
+        # old format: single counterparty column
+        df = df[~df["Buchungstext"].str.contains("Tagessaldo") & ~df["Verwendungszweck"].str.contains("Tagessaldo")].copy()
+        df.rename(columns={"Buchungstag": "booking", "Betrag (EUR)": "amount.value",
+                           "Auftraggeber / Begünstigter": "partnerName", "Kontonummer": "partnerAccount.iban",
+                           "Verwendungszweck": "reference"}, inplace=True)
+
+    df = df[df["booking"] != ""]
+    df["amount.value"] = df["amount.value"].str.replace(".", "", regex=False).str.replace(",", ".", regex=False).astype(float)
+    if "partnerName" not in df.columns:
+        # counterparty is the payee for outgoing and the payer for incoming transactions
+        df["partnerName"] = np.where(df["amount.value"] < 0, df["Zahlungsempfänger*in"], df["Zahlungspflichtige*r"])
+    df["booking"] = pd.to_datetime(df["booking"], format="%d.%m.%y", errors="coerce").fillna(
+        pd.to_datetime(df["booking"], format="%d.%m.%Y", errors="coerce"))
+    df["amount.currency"] = "EUR"
+    df["account"] = "DKB Konto"
+    return df
+
 for filename in inputfiles:
     # open file and close afterwards
     with open(filename, encoding='latin_1') as trx_file:
@@ -40,20 +79,7 @@ for filename in inputfiles:
 
         if filename.endswith('.csv') and '10527' in filename:
             # DKB Debitkonto Importer
-
-            file_df = pd.read_csv(trx_file, delimiter=';', header=4, quoting=1, decimal=',', thousands='.',
-                                      parse_dates=["Buchungsdatum"], date_parser=german_date)
-            # TODO dynamic header 4 or 6 depending which search & export mask was used. better to write function to independently find header position
-            file_df.rename(
-                columns={"ZahlungsempfÃ¤nger*in": "partnerName", "Betrag (â¬)": 'amount.value',
-                         "Buchungsdatum": "booking",
-                         "Verwendungszweck": "reference", "GlÃ¤ubiger-ID": "partnerAccount.iban"}, inplace=True)
-
-            # file_df["booking"] = pd.to_datetime(file_df["booking"], format="%d.%m.%Y")
-            # file_df["amount.value"] = file_df["amount.value"].str.replace("Â â¬", "").str.replace(".", "").str.replace(",", ".").astype(float)
-            file_df["amount.value"] = file_df["amount.value"].astype(float)
-            file_df.insert(4, "amount.currency", "EUR")
-            file_df.insert(1, "account", "DKB Konto")
+            file_df = read_dkb_giro(filename)
 
         if filename.endswith('.csv') and '4748' in filename:
             # DKB Kreditkarte Importer
