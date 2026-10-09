@@ -28,5 +28,11 @@
     ],
     "contribution_category": "Haushaltskonto",
     "cash_category": "Bargeld"
-  }
+  },
+  "fixed_categories": [
+    {
+      "pattern": "amazon|amzn",
+      "category": "Shopping"
+    }
+  ]
 }

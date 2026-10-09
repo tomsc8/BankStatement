@@ -16,6 +16,7 @@ Reasons for review:
 - same text: an identical text is mostly booked to another category
 - model: a model trained without this transaction confidently suggests another category
 - review category: all transactions of the categories given with --categories
+- uncategorized: transactions the classifier was not sure about
 """
 import argparse
 import csv
@@ -28,7 +29,7 @@ import numpy as np
 import pandas as pd
 from unidecode import unidecode
 
-from classifier import features, has_category, household_rule, rule_categories
+from classifier import features, fixed_mask, has_category, household_rule, rule_categories
 from config import CONFIG, path
 
 parser = argparse.ArgumentParser()
@@ -44,7 +45,8 @@ MIN_CONFIDENCE = 0.8
 hist = pd.read_excel(args.history, sheet_name="Sheet1")
 if "id" not in hist.columns:
     raise SystemExit("history has no id column, run repair_history.py or import.py first")
-df = hist[has_category(hist)].copy()
+# transactions with a fixed category (config "fixed_categories") keep their manual categories and are not audited
+df = hist[has_category(hist) & ~fixed_mask(hist)].copy()
 df["category"] = df["category"].astype(str).str.strip()
 df["booking"] = df["booking"].astype(str).str[:10]
 f = features(df)
@@ -169,6 +171,22 @@ for _, row in disagree.sort_values("confidence", ascending=False).iterrows():
 for _, row in df[df["category"].isin(args.categories)].iterrows():
     add(row, row["predicted"] if row["predicted"] != row["category"] else "", f"review category {row['category']}",
         row["confidence"])
+
+# transactions without category (the classifier was not sure enough), suggested by a model trained on all data
+open_rows = hist[~has_category(hist) & ~fixed_mask(hist)].copy()
+if not open_rows.empty:
+    open_rows["booking"] = open_rows["booking"].astype(str).str[:10]
+    open_rows["category"] = ""
+    with tempfile.TemporaryDirectory() as tmp:
+        train_file = os.path.join(tmp, "train.txt")
+        train = df[(df["text"] != "") & ~df["category"].isin(RULE_CATEGORIES)]
+        ("__label__" + train["category"] + " " + train["text"]).to_csv(train_file, index=False, header=False,
+                                                                       quoting=csv.QUOTE_NONE, escapechar="\\")
+        model = fasttext.train_supervised(train_file, epoch=50, lr=0.5, minn=3, maxn=5, seed=42, verbose=0)
+        labels, probs = model.predict(features(open_rows)["text"].tolist(), k=1)
+    for (_, row), l, p in zip(open_rows.iterrows(), labels, probs):
+        review[("open", row.name)] = {**row[COLUMNS].to_dict(), "suggested": l[0].replace("__label__", ""),
+                                      "confidence": round(float(p[0]), 3), "reason": "uncategorized", "decision": ""}
 
 review = pd.DataFrame(review.values(), columns=COLUMNS + ["suggested", "confidence", "reason", "decision"])
 review = review.sort_values(["decision", "reason", "category", "booking"], ascending=[False, True, True, True])

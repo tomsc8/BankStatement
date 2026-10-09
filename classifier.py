@@ -1,5 +1,6 @@
 """Classification of transactions: history lookup, fastText model and household rules.
 
+0. fixed: transactions matching a pattern of config "fixed_categories" get that category (e.g. marketplaces)
 1. lookup: a transaction whose text, counterparty IBAN or counterparty name always had the same category in the
    history gets that category (recurring recipients do not depend on the model)
 2. model: all other transactions are classified by the fastText model
@@ -8,6 +9,8 @@
    In the members' own accounts transfers to the household account are contributions and reimbursements
    from it are cash, so that they cancel out the cash payments made for the household.
 """
+import re
+
 import fasttext
 import pandas as pd
 
@@ -26,6 +29,20 @@ def features(df):
     out["raw"] = (df["partnerName"].fillna("").astype(str) + " " + df["reference"].fillna("").astype(str)).str.lower()
     out["ref"] = df["reference"].fillna("").astype(str).str.lower()
     return out
+
+
+def fixed_category(raw, rules):
+    # category of the first fixed rule (config "fixed_categories") whose pattern matches partner and reference
+    for rule in rules:
+        if re.search(rule["pattern"], raw, re.IGNORECASE):
+            return rule["category"]
+    return None
+
+
+def fixed_mask(df):
+    # rows matching a fixed rule, e.g. marketplaces whose purchases cannot be told apart by the text
+    raw = features(df)["raw"]
+    return raw.map(lambda t: fixed_category(t, CONFIG.get("fixed_categories", [])) is not None)
 
 
 def has_category(df):
@@ -58,7 +75,10 @@ class Classifier:
         result = []
         for (idx, row), feature, prediction in zip(df.iterrows(), f.itertuples(), predictions):
             category, probability, source = None, None, None
-            for key in ("text", "iban", "merchant"):
+            fixed = fixed_category(feature.raw, CONFIG.get("fixed_categories", []))
+            if fixed:
+                category, probability, source = fixed, 1.0, "fixed"
+            for key in ("text", "iban", "merchant") if category is None else ():
                 value = getattr(feature, key)
                 if value and value in self.lookup[key]:
                     category, probability, source = self.lookup[key][value], 1.0, "lookup"

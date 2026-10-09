@@ -43,3 +43,10 @@ def test_ensure_ids_keeps_existing_and_numbers_new_rows():
     df = ensure_ids(pd.DataFrame({"id": [3, None, 1, None]}))
     assert df["id"].tolist() == [3, 4, 1, 5]
     assert ensure_ids(pd.DataFrame({"a": [1, 2]}))["id"].tolist() == [1, 2]
+
+
+def test_fixed_category():
+    from classifier import fixed_category
+    rules = [{"pattern": "amazon|amzn", "category": "Shopping"}]
+    assert fixed_category("amazon payments europe 303-123 amzn mktp de", rules) == "Shopping"
+    assert fixed_category("billa dankt", rules) is None

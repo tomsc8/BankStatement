@@ -15,7 +15,7 @@ import fasttext
 import numpy as np
 import pandas as pd
 
-from classifier import rule_categories
+from classifier import fixed_mask, rule_categories
 from config import CONFIG, path
 from sharedfunctions import prep_fasttext
 
@@ -41,6 +41,8 @@ prep_df = prep_fasttext(prep_df)
 prep_df = prep_df[prep_df["fasttext"].str.split().str.len() > 1]
 # categories set by the household rules depend on account and counterparty, not on the text
 prep_df = prep_df[~prep_df["category"].isin(rule_categories(CONFIG.get("household")))]
+# transactions with a fixed category are not learned, their manual categories would only add noise
+prep_df = prep_df[~fixed_mask(prep_df)]
 
 # stratified split, small categories are used for training only
 rng = np.random.default_rng(SEED)
