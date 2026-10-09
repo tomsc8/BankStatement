@@ -8,8 +8,8 @@ usage: python apply_review.py [category_audit.xlsx] [--history FILE]
     (edit the "suggested" column to correct it), a category in "decision" overrides it, "-" keeps the current one
   - rows below the marker, or all rows without a marker: decision "x" takes the suggestion, any other text is used
     as category, empty keeps the current one
-- New merchants sheet: "category" (or x = take the suggestion) is set for all uncategorized transactions of that
-  recipient
+- New merchants sheet: "category" is set for all uncategorized transactions of that recipient; empty takes the
+  suggestion (if there is one), "-" skips the recipient
 A timestamped backup of the history is written first.
 """
 import argparse
@@ -68,7 +68,11 @@ member = pd.Series([is_member_transfer(r, ft, CONFIG.get("household")) for (_, r
                    index=hist.index)
 merchant_count = 0
 for _, m in merchants.iterrows():
-    category = m["suggested"].strip() if m["category"].strip().lower() == "x" else m["category"].strip()
+    # an empty category takes the suggestion, "-" skips the recipient
+    entry = m["category"].strip()
+    if entry == "-":
+        continue
+    category = m["suggested"].strip() if entry.lower() in ("", "x") else entry
     if not category:
         continue
     rows = open_rows & ~member & (f["cluster"] == m["merchant"])

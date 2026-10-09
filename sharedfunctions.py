@@ -30,6 +30,9 @@ STOPWORDS = NLTK_EN_STOPWORDS | {
     "stripe", "via", "ppro",
 }
 
+# fastText parameters: subwords keep the training stable, a small bucket/dim keeps the model at ~20 MB instead of 800 MB
+MODEL_PARAMS = dict(epoch=50, lr=0.5, minn=3, maxn=5, bucket=100000, dim=50)
+
 PUNCTUATION = re.compile(rf"([{re.escape(string.punctuation)}])+")
 DIGIT_BLOCKS = re.compile(r"\b\d+\b")
 

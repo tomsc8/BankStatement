@@ -17,9 +17,9 @@ import pandas as pd
 
 from classifier import fixed_mask, rule_categories
 from config import CONFIG, path
-from sharedfunctions import prep_fasttext
+from sharedfunctions import MODEL_PARAMS, prep_fasttext
 
-PARAMS = dict(epoch=50, lr=0.5, minn=3, maxn=5)
+PARAMS = MODEL_PARAMS
 MIN_VALIDATION_SIZE = 5
 SEED = 42
 

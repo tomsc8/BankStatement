@@ -6,7 +6,8 @@ Writes category_audit.xlsx with the sheets
 - Review: one row per transaction to check, with the current and the suggested category and the reason.
   Fill the "decision" column: x = take the suggestion, a category name = use that one, empty = keep as is.
 - New merchants: uncategorized transactions of recipients never seen before, one row per recipient. Fill "category"
-  (or x = take the suggestion); it is set for all their transactions and later imports recognize the recipient.
+  (empty = take the suggestion, "-" = skip); it is set for all their transactions and later imports recognize the
+  recipient.
 - Renames: category renames applied to all transactions (fill "to", empty = keep)
 - Overview: every category with count, period, money in/out and whether it counts as transfer
 - Category names: near identical category names and rarely used categories
@@ -34,6 +35,7 @@ from unidecode import unidecode
 from classifier import (MIN_PROBABILITY, features, fixed_mask, has_category, household_rule, is_member_transfer,
                         rule_categories)
 from config import CONFIG, path
+from sharedfunctions import MODEL_PARAMS
 
 parser = argparse.ArgumentParser()
 parser.add_argument("history", nargs="?", default=path(CONFIG["history_file"]))
@@ -113,7 +115,7 @@ with tempfile.TemporaryDirectory() as tmp:
         train = df[(df["fold"] != fold) & (df["text"] != "") & ~df["category"].isin(RULE_CATEGORIES)]
         ("__label__" + train["category"] + " " + train["text"]).to_csv(train_file, index=False, header=False,
                                                                        quoting=csv.QUOTE_NONE, escapechar="\\")
-        model = fasttext.train_supervised(train_file, epoch=50, lr=0.5, minn=3, maxn=5, seed=42, verbose=0)
+        model = fasttext.train_supervised(train_file, **MODEL_PARAMS, seed=42, verbose=0)
         test = df["fold"] == fold
         labels, probs = model.predict(df.loc[test, "text"].tolist(), k=10)
         for idx, ls, ps in zip(df.index[test], labels, probs):
@@ -189,7 +191,7 @@ if not open_rows.empty:
         train = df[(df["text"] != "") & ~df["category"].isin(RULE_CATEGORIES)]
         ("__label__" + train["category"] + " " + train["text"]).to_csv(train_file, index=False, header=False,
                                                                        quoting=csv.QUOTE_NONE, escapechar="\\")
-        model = fasttext.train_supervised(train_file, epoch=50, lr=0.5, minn=3, maxn=5, seed=42, verbose=0)
+        model = fasttext.train_supervised(train_file, **MODEL_PARAMS, seed=42, verbose=0)
         labels, probs = model.predict(of["text"].tolist(), k=1)
     open_rows["suggested"] = [l[0].replace("__label__", "") for l in labels]
     open_rows["confidence"] = [round(float(p[0]), 3) for p in probs]
