@@ -1,0 +1,17 @@
+# personal data
+*.csv
+*.xlsx
+*.ods
+*.backup
+*.json
+*.txt
+!requirements.txt
+input/
+!demo/*.xlsx
+model/
+finanzen.pbix
+
+# environments / caches
+venv/
+.venv/
+__pycache__/
