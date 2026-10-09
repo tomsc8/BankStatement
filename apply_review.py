@@ -3,8 +3,11 @@
 usage: python apply_review.py [category_audit.xlsx] [--history FILE]
 
 - Renames sheet: every category "from" is renamed to "to" (rows without "to" are skipped)
-- Review sheet: decision "x" takes the suggested category, any other text is used as category,
-  empty keeps the current one. Rows are matched by id.
+- Review sheet, rows are matched by id:
+  - rows above a marker row (decision "hier weiter" or "stop") count as reviewed: the suggested category is used
+    (edit the "suggested" column to correct it), a category in "decision" overrides it, "-" keeps the current one
+  - rows below the marker, or all rows without a marker: decision "x" takes the suggestion, any other text is used
+    as category, empty keeps the current one
 A timestamped backup of the history is written first.
 """
 import argparse
@@ -29,15 +32,25 @@ renames = renames[renames["to"].str.strip() != ""]
 for _, r in renames.iterrows():
     hist.loc[hist["category"] == r["from"], "category"] = r["to"].strip()
 
-review = sheets["Review"].fillna("")
-review = review[review["decision"].str.strip() != ""]
+MARKERS = ("hier weiter", "stop")
+review = sheets["Review"].fillna("").reset_index(drop=True)
+marker = review.index[review["decision"].str.strip().str.lower().str.startswith(MARKERS)]
+reviewed_until = marker[0] if len(marker) else 0
 decided = {}
-for _, r in review.iterrows():
+for i, r in review.iterrows():
     decision = r["decision"].strip()
-    category = r["suggested"] if decision.lower() == "x" else decision
-    if not category:
+    if i == reviewed_until and len(marker) or decision == "-":
+        continue
+    if decision.lower() == "x" or (decision == "" and i < reviewed_until):
+        category = r["suggested"].strip()
+    else:
+        category = decision
+    if category:
+        decided[int(r["id"])] = category
+    elif decision.lower() == "x":
         raise SystemExit(f"id {r['id']}: decision 'x' but no suggestion")
-    decided[int(r["id"])] = category
+if len(marker):
+    print(f"rows above the marker (row {reviewed_until + 2} in Excel) are taken as reviewed")
 unknown = set(decided) - set(hist["id"])
 if unknown:
     raise SystemExit(f"ids not found in {args.history}: {sorted(unknown)[:10]}")
